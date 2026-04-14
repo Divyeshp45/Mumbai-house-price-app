@@ -1,57 +1,38 @@
-import streamlit as st
+from flask import Flask, request, render_template
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+import joblib
 
-st.title("🏠 Mumbai House Price Prediction")
+app = Flask(__name__)
 
-# Load dataset
+# Load model
+model = joblib.load("house_model.pkl")
+columns = joblib.load("columns.pkl")
 
-df = pd.read_csv("mumbai_house.csv")
-# Preprocessing
-def convert_price(row):
-    if row["price_unit"] == "Cr":
-        return row["price"] * 100
-    else:
-        return row["price"]
+@app.route("/")
+def home():
+    locations = [col.replace("locality_", "") for col in columns if "locality_" in col]
+    return render_template("index.html", locations=locations)
 
-df["price"] = df.apply(convert_price, axis=1)
-df = df.drop(columns=["price_unit"])
-df = df[df["price"] < 500]
+@app.route("/predict", methods=["POST"])
+def predict():
+    area = int(request.form["area"])
+    bhk = int(request.form["bhk"])
+    location = request.form["location"]
 
-top_localities = df["locality"].value_counts().head(20).index
-df["locality"] = df["locality"].apply(lambda x: x if x in top_localities else "other")
+    input_data = pd.DataFrame([[0]*len(columns)], columns=columns)
 
-df = df.drop(columns=["type", "status", "age"])
-df = pd.get_dummies(df, drop_first=True)
+    input_data["bhk"] = bhk
+    input_data["area"] = area
 
-# Train model
-X = df.drop(columns=["price"])
-y = df["price"]
+    col_name = "locality_" + location
+    if col_name in input_data.columns:
+        input_data[col_name] = 1
 
-model = RandomForestRegressor(n_estimators=100)
-model.fit(X, y)
+    prediction = model.predict(input_data)[0]
 
-# Inputs
-area = st.number_input("Area (sqft)", 100, 10000, 500)
-bhk = st.selectbox("BHK", [1, 2, 3, 4, 5])
+    return render_template("index.html",
+                           prediction=round(prediction, 2),
+                           locations=[col.replace("locality_", "") for col in columns if "locality_" in col])
 
-location = st.selectbox("Location", [
-    "Andheri West", "Borivali West", "Mira Road East",
-    "Panvel", "Thane", "other"
-])
-
-# Prepare input
-input_data = pd.DataFrame(columns=X.columns)
-input_data.loc[0] = 0
-
-input_data["bhk"] = bhk
-input_data["area"] = area
-
-col_name = "locality_" + location
-if col_name in input_data.columns:
-    input_data[col_name] = 1
-
-# Predict
-if st.button("Predict Price"):
-    prediction = model.predict(input_data)
-    st.success(f"Estimated Price: ₹ {round(prediction[0], 2)} Lakhs")
+if __name__ == "__main__":
+    app.run(debug=True)
